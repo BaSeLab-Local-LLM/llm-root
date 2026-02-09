@@ -1,0 +1,6 @@
+[submodule "submodules/backend"]
+	path = submodules/backend
+	url = https://github.com/BaSeLab-Local-LLM/llm-backend.git
+[submodule "submodules/frontend"]
+	path = submodules/frontend
+	url = https://github.com/BaSeLab-Local-LLM/llm-frontend.git
