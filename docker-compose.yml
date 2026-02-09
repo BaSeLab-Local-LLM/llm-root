@@ -15,9 +15,9 @@ services:
   #                              vLLM SERVICE
   # ============================================================================
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.6.6.post1
     container_name: llm-vllm
-    runtime: nvidia
+    ipc: host
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
       - HF_TOKEN=${HF_TOKEN:-}
@@ -25,22 +25,29 @@ services:
       - OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
       - NUMEXPR_MAX_THREADS=${NUMEXPR_MAX_THREADS:-8}
       - MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
-    command: >
-      --model ${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}
-      --max-model-len ${VLLM_MAX_MODEL_LEN:-4096}
-      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
-      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-64}
-      --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS:-1024}
-      --dtype ${VLLM_DTYPE:-auto}
-      --swap-space ${VLLM_SWAP_SPACE:-4}
-      --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE:-1}
-      --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE:-auto}
-      --enable-prefix-caching
-      --enable-chunked-prefill
-      --guided-decoding-backend ${VLLM_GUIDED_DECODING_BACKEND:-outlines}
-      --trust-remote-code
-      --host 0.0.0.0
-      --port 8000
+      - NCCL_P2P_DISABLE=1
+      - VLLM_ENFORCE_EAGER=true
+      - VLLM_WORKER_USE_RAY=false
+    entrypoint: ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+    command:
+      - "--model"
+      - "${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+      - "--max-model-len"
+      - "${VLLM_MAX_MODEL_LEN:-4096}"
+      - "--gpu-memory-utilization"
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+      - "--max-num-seqs"
+      - "${VLLM_MAX_NUM_SEQS:-64}"
+      - "--dtype"
+      - "${VLLM_DTYPE:-auto}"
+      - "--swap-space"
+      - "${VLLM_SWAP_SPACE:-4}"
+      - "--enable-prefix-caching"
+      - "--trust-remote-code"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
     ports:
       - "${VLLM_PORT:-8000}:8000"
     volumes:
