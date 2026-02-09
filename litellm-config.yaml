@@ -1,0 +1,70 @@
+# ==============================================================================
+#                         LITELLM PROXY CONFIGURATION
+# ==============================================================================
+# This file configures the LiteLLM proxy to connect to your local vLLM server.
+# Modify model_list to add more models or change settings.
+# ==============================================================================
+
+# Model Configuration
+model_list:
+  # Primary model - uses environment variable from docker-compose
+  - model_name: "local-llm"
+    litellm_params:
+      model: "openai/${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+      api_base: "http://vllm:8000/v1"
+      api_key: "not-needed"
+      rpm: 100
+      tpm: 100000
+    model_info:
+      description: "Local LLM running on vLLM"
+      max_tokens: 4096
+
+  # OpenAI-compatible alias (for drop-in replacement)
+  - model_name: "gpt-3.5-turbo"
+    litellm_params:
+      model: "openai/${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+      api_base: "http://vllm:8000/v1"
+      api_key: "not-needed"
+
+  - model_name: "gpt-4"
+    litellm_params:
+      model: "openai/${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+      api_base: "http://vllm:8000/v1"
+      api_key: "not-needed"
+
+# LiteLLM Settings
+litellm_settings:
+  # Caching (set to true and add Redis for production)
+  cache: false
+  
+  # Retry settings
+  num_retries: 3
+  request_timeout: 120
+  
+  # Logging
+  set_verbose: false
+  json_logs: true
+  
+  # Drop unsupported params instead of erroring
+  drop_params: true
+
+# Router Settings
+router_settings:
+  routing_strategy: "least-busy"
+  num_retries: 2
+  timeout: 120
+
+# General Proxy Settings
+general_settings:
+  # Database connection (from environment)
+  database_url: "os.environ/DATABASE_URL"
+  master_key: "os.environ/LITELLM_MASTER_KEY"
+  
+  # Enable Admin UI
+  enable_admin_ui: true
+  
+  # Store model info in DB
+  store_model_in_db: true
+  
+  # CORS for frontend
+  allowed_origins: ["*"]

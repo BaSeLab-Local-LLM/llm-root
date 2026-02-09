@@ -1,0 +1,181 @@
+version: "3.8"
+
+# ==============================================================================
+#                    LOCAL LLM DEPLOYMENT - DOCKER COMPOSE
+# ==============================================================================
+# Services:
+#   - vllm: GPU-accelerated LLM inference server
+#   - postgres: Database for LiteLLM (API keys, usage tracking)
+#   - litellm: API Gateway (OpenAI-compatible, key management)
+#   - frontend: React web UI (Nginx)
+# ==============================================================================
+
+services:
+  # ============================================================================
+  #                              vLLM SERVICE
+  # ============================================================================
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: llm-vllm
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HOME=${HF_HOME:-/root/.cache/huggingface}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
+      - NUMEXPR_MAX_THREADS=${NUMEXPR_MAX_THREADS:-8}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
+    command: >
+      --model ${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}
+      --max-model-len ${VLLM_MAX_MODEL_LEN:-4096}
+      --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.85}
+      --max-num-seqs ${VLLM_MAX_NUM_SEQS:-64}
+      --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS:-1024}
+      --dtype ${VLLM_DTYPE:-auto}
+      --swap-space ${VLLM_SWAP_SPACE:-4}
+      --tensor-parallel-size ${VLLM_TENSOR_PARALLEL_SIZE:-1}
+      --kv-cache-dtype ${VLLM_KV_CACHE_DTYPE:-auto}
+      --enable-prefix-caching
+      --enable-chunked-prefill
+      --guided-decoding-backend ${VLLM_GUIDED_DECODING_BACKEND:-outlines}
+      --trust-remote-code
+      --host 0.0.0.0
+      --port 8000
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    volumes:
+      - vllm-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        limits:
+          cpus: "${VLLM_CPU_LIMIT:-12}"
+          memory: ${VLLM_MEMORY_LIMIT:-24g}
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+    networks:
+      - llm-network
+
+  # ============================================================================
+  #                           POSTGRESQL SERVICE
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: llm-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-llmadmin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-litellm}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}"
+      - "-c"
+      - "max_connections=100"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "${POSTGRES_CPU_LIMIT:-2}"
+          memory: ${POSTGRES_MEMORY_LIMIT:-2g}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmadmin} -d ${POSTGRES_DB:-litellm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - llm-network
+
+  # ============================================================================
+  #                         LITELLM PROXY SERVICE
+  # ============================================================================
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: llm-litellm
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-llmadmin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-litellm}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY is required}
+      - LITELLM_SALT_KEY=${LITELLM_SALT_KEY:-}
+      - UI_USERNAME=${LITELLM_UI_USERNAME:-admin}
+      - UI_PASSWORD=${LITELLM_UI_PASSWORD:-admin}
+      - STORE_MODEL_IN_DB=True
+    command: >
+      --config /app/config.yaml
+      --port 4000
+      --num_workers 4
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "${LITELLM_CPU_LIMIT:-4}"
+          memory: ${LITELLM_MEMORY_LIMIT:-2g}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vllm:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - llm-network
+
+  # ============================================================================
+  #                           FRONTEND SERVICE
+  # ============================================================================
+  frontend:
+    build:
+      context: ./submodules/frontend
+      dockerfile: Dockerfile
+    container_name: llm-frontend
+    environment:
+      - VITE_API_BASE_URL=http://localhost:${LITELLM_PORT:-4000}
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    deploy:
+      resources:
+        limits:
+          cpus: "${FRONTEND_CPU_LIMIT:-1}"
+          memory: ${FRONTEND_MEMORY_LIMIT:-512m}
+    depends_on:
+      - litellm
+    restart: unless-stopped
+    networks:
+      - llm-network
+
+# ==============================================================================
+#                               VOLUMES
+# ==============================================================================
+volumes:
+  vllm-cache:
+    name: llm-vllm-cache
+  postgres-data:
+    name: llm-postgres-data
+
+# ==============================================================================
+#                               NETWORKS
+# ==============================================================================
+networks:
+  llm-network:
+    name: llm-network
+    driver: bridge
