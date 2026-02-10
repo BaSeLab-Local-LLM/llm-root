@@ -10,7 +10,7 @@ model_list:
   # Primary model - uses environment variable from docker-compose
   - model_name: "local-llm"
     litellm_params:
-      model: "openai/${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+      model: "openai/Qwen/Qwen2.5-3B-Instruct"
       api_base: "http://vllm:8000/v1"
       api_key: "not-needed"
       rpm: 100
@@ -22,13 +22,13 @@ model_list:
   # OpenAI-compatible alias (for drop-in replacement)
   - model_name: "gpt-3.5-turbo"
     litellm_params:
-      model: "openai/${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+      model: "openai/Qwen/Qwen2.5-3B-Instruct"
       api_base: "http://vllm:8000/v1"
       api_key: "not-needed"
 
   - model_name: "gpt-4"
     litellm_params:
-      model: "openai/${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+      model: "openai/Qwen/Qwen2.5-3B-Instruct"
       api_base: "http://vllm:8000/v1"
       api_key: "not-needed"
 
