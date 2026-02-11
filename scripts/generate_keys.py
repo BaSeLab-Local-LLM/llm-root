@@ -8,7 +8,10 @@ from sqlalchemy import text
 
 # Configuration
 LITELLM_URL = os.environ.get("LITELLM_URL", "http://localhost:4000")
-MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY", "sk-master-key")
+MASTER_KEY = os.environ.get("LITELLM_MASTER_KEY")
+if not MASTER_KEY:
+    print("LITELLM_MASTER_KEY environment variable is required.")
+    exit(1)
 # Ensure DATABASE_URL is set
 if "DATABASE_URL" not in os.environ:
     print("DATABASE_URL environment variable is required.")
@@ -100,19 +103,25 @@ def generate_key(user_id, role="student", max_budget=1.0, rpm=10):
         print(f"Error generating key for {user_id}: {e}")
         return None
 
-async def seed_database(sql_statements):
-    print(f" Connecting to DB to execute {len(sql_statements)} statements...")
+async def seed_database(parameterized_statements):
+    """
+    파라미터화된 쿼리를 실행합니다.
+    각 항목은 (sql_text, params_dict) 튜플 또는 (sql_text, None) 형태입니다.
+    """
+    print(f" Connecting to DB to execute {len(parameterized_statements)} statements...")
     try:
         engine = create_async_engine(DATABASE_URL)
         async with engine.begin() as conn:
-            for sql in sql_statements:
+            for sql, params in parameterized_statements:
                 if sql.strip():
-                    await conn.execute(text(sql))
+                    if params:
+                        await conn.execute(text(sql), params)
+                    else:
+                        await conn.execute(text(sql))
         await engine.dispose()
         print("Database seeding completed successfully.")
     except Exception as e:
         print(f"Database seeding failed: {e}")
-        # Assuming DB connection issue, but let's exit 1?
         exit(1)
 
 def main():
@@ -128,40 +137,61 @@ def main():
         delete_keys(keys)
         
     print("Generating new keys...")
-    sql_statements = []
+    statements = []  # list of (sql, params) tuples
     
     # Truncate users table first
-    sql_statements.append("TRUNCATE TABLE llm_app.users CASCADE;")
+    statements.append(("TRUNCATE TABLE llm_app.users CASCADE;", None))
 
-    # 2. Admin Key
+    # 초기 비밀번호: 모든 계정 "1234" (첫 로그인 후 변경 권장)
+    INITIAL_PASSWORD = "1234"
+
+    # 2. Admin Key — 파라미터화 쿼리로 SQL Injection 방지
     print("Generating Admin key...", end=" ")
     admin_key = generate_key("admin", role="admin", max_budget=1000.0, rpm=1000)
     if admin_key:
         print("Done.")
-        sql = f"""
-        INSERT INTO llm_app.users (api_key, username, password_hash, role, is_active, daily_token_limit)
-        VALUES ('{admin_key}', 'admin', crypt('admin', gen_salt('bf', 8)), 'admin', true, 999999999);
-        """
-        sql_statements.append(sql.strip())
+        statements.append((
+            """INSERT INTO llm_app.users (api_key, username, password_hash, role, is_active, daily_token_limit, display_name, class_name)
+               VALUES (:api_key, :username, crypt(:password, gen_salt('bf', 12)), :role, true, :daily_limit, :display_name, :class_name);""",
+            {
+                "api_key": admin_key,
+                "username": "admin",
+                "password": INITIAL_PASSWORD,
+                "role": "admin",
+                "daily_limit": 999999999,
+                "display_name": "admin",
+                "class_name": "admin",
+            }
+        ))
     else:
         print("Failed.")
 
-    # 3. Student Keys
+    # 3. Student Keys — 파라미터화 쿼리로 SQL Injection 방지
     print(f"Generating {STUDENT_COUNT} Student keys...")
     for i in range(1, STUDENT_COUNT + 1):
         student_id = str(i)
-        # print(f"Student {student_id}...", end="\r")
         api_key = generate_key(student_id, role="student", max_budget=1.0, rpm=10)
         if api_key:
-            sql = f"""
-            INSERT INTO llm_app.users (api_key, username, password_hash, role, is_active, daily_token_limit)
-            VALUES ('{api_key}', '{student_id}', crypt('1234', gen_salt('bf', 8)), 'student', true, 100000);
-            """
-            sql_statements.append(sql.strip())
+            statements.append((
+                """INSERT INTO llm_app.users (api_key, username, password_hash, role, is_active, daily_token_limit, display_name, class_name)
+                   VALUES (:api_key, :username, crypt(:password, gen_salt('bf', 12)), :role, true, :daily_limit, :display_name, :class_name);""",
+                {
+                    "api_key": api_key,
+                    "username": student_id,
+                    "password": INITIAL_PASSWORD,
+                    "role": "student",
+                    "daily_limit": 100000,
+                    "display_name": "test",
+                    "class_name": "test",
+                }
+            ))
+
+    print(f"  초기 비밀번호: {INITIAL_PASSWORD} (모든 계정 동일)")
+    print(f"  ⚠  첫 로그인 후 반드시 비밀번호를 변경하세요!")
     
     # 4. Insert into DB
-    if sql_statements:
-        asyncio.run(seed_database(sql_statements))
+    if statements:
+        asyncio.run(seed_database(statements))
     else:
         print("No SQL statements to run.")
 

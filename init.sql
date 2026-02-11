@@ -37,9 +37,14 @@ CREATE TABLE llm_app.users (
     password_hash   VARCHAR(256) NOT NULL,
     role            llm_app.user_role NOT NULL DEFAULT 'student',
     is_active       BOOLEAN NOT NULL DEFAULT true,
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,  -- 로그인 실패 횟수 (10회 이상 시 계정 비활성화)
 
     -- Quota (사용량 할당량)
     daily_token_limit   BIGINT DEFAULT 100000,       -- 일일 토큰 한도 (NULL = 무제한)
+
+    -- 사용자 프로필 정보
+    display_name    VARCHAR(64),                     -- 실명 또는 표시 이름
+    class_name      VARCHAR(64),                     -- 소속 수업/반
 
     -- API Key 만료
     api_key_expires_at  TIMESTAMPTZ,                 -- NULL = 만료 없음
@@ -226,16 +231,31 @@ CREATE TRIGGER trigger_schedules_updated_at
 -- ==============================================================================
 
 -- 기본 관리자 계정
--- ⚠️ 운영 환경에서는 비밀번호를 반드시 변경하세요
-INSERT INTO llm_app.users (api_key, username, password_hash, role, is_active, daily_token_limit)
-VALUES (
-    'sk-admin-' || encode(gen_random_bytes(24), 'hex'),   -- 자동 생성 API Key
-    'admin',
-    crypt('admin', gen_salt('bf', 10)),                    -- bcrypt 해시
-    'admin',
-    true,
-    NULL                                                   -- 관리자는 무제한
-);
+-- 초기 비밀번호는 generate_keys.py 스크립트로 설정됩니다.
+-- generate_keys.py를 실행하여 관리자 계정을 초기화하세요.
+DO $$
+DECLARE
+    _initial_password TEXT;
+BEGIN
+    -- 32자 랜덤 비밀번호 생성 (bcrypt cost=12로 해싱)
+    _initial_password := encode(gen_random_bytes(16), 'hex');
+    
+    INSERT INTO llm_app.users (api_key, username, password_hash, role, is_active, daily_token_limit)
+    VALUES (
+        'sk-admin-' || encode(gen_random_bytes(24), 'hex'),
+        'admin',
+        crypt(_initial_password, gen_salt('bf', 12)),
+        'admin',
+        true,
+        NULL
+    );
+    
+    -- 보안: 비밀번호를 로그에 출력하지 않습니다.
+    -- generate_keys.py 스크립트를 사용하여 비밀번호를 재설정하세요.
+    RAISE NOTICE '============================================';
+    RAISE NOTICE 'Admin account created. Run generate_keys.py to set password.';
+    RAISE NOTICE '============================================';
+END $$;
 
 -- 시스템 설정 초기값 (updated_by = 관리자 계정)
 INSERT INTO llm_app.system_settings (key, value, description, updated_by) VALUES

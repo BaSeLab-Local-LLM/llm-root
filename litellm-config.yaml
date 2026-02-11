@@ -53,5 +53,5 @@ general_settings:
   # Store model info in DB
   store_model_in_db: true
   
-  # CORS for frontend
-  allowed_origins: ["*"]
+  # CORS for frontend — 내부 네트워크 전용 (절대 "*" 사용 금지)
+  allowed_origins: ["http://localhost:3000"]
