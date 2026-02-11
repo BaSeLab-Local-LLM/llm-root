@@ -1,48 +1,72 @@
 version: "3.8"
 
 # ==============================================================================
-#                    LOCAL LLM DEPLOYMENT - DOCKER COMPOSE
+#                    SERVER LLM DEPLOYMENT - DOCKER COMPOSE
 # ==============================================================================
+# Qwen3-VL-32B-Instruct-FP8 전용 서버 배포 구성
+# 서버 사양: Threadripper PRO 7975WX / DDR5 256GB / RTX PRO 6000 96GB
+#
 # Services:
-#   - vllm: GPU-accelerated LLM inference server
+#   - vllm: GPU-accelerated LLM inference server (FP8 + FP8 KV cache)
 #   - postgres: Database for LiteLLM (API keys, usage tracking)
 #   - litellm: API Gateway (OpenAI-compatible, key management)
+#   - backend: FastAPI (auth, chat, file upload)
 #   - frontend: React web UI (Nginx)
+#
+# 사용법:
+#   docker compose -f docker-compose.server.yml --env-file .env.server up -d
 # ==============================================================================
 
 services:
   # ============================================================================
   #                              vLLM SERVICE
   # ============================================================================
+  # Qwen3-VL-32B-Instruct-FP8 — FP8 모델 + FP8 KV 캐시
+  # VRAM 사용: ~33GB(모델) + ~12GB(KV) + ~3GB(오버헤드) ≈ 48GB
+  # Blackwell GPU 하드웨어 네이티브 FP8 가속 활용
+  # ============================================================================
   vllm:
-    image: vllm/vllm-openai:v0.15.0
+    image: vllm/vllm-openai:v0.11.1
     container_name: llm-vllm
     ipc: host
     environment:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-0}
       - HF_TOKEN=${HF_TOKEN:-}
       - HF_HOME=${HF_HOME:-/root/.cache/huggingface}
-      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
-      - NUMEXPR_MAX_THREADS=${NUMEXPR_MAX_THREADS:-8}
-      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - NUMEXPR_MAX_THREADS=${NUMEXPR_MAX_THREADS:-4}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
       - NCCL_P2P_DISABLE=1
-      - HF_HUB_ENABLE_HF_TRANSFER=0
     entrypoint: ["vllm", "serve"]
     command:
-      - "${VLLM_MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}"
+      - "${VLLM_MODEL:-Qwen/Qwen3-VL-32B-Instruct-FP8}"
+      # ── 컨텍스트 & 메모리 ──
       - "--max-model-len"
-      - "${VLLM_MAX_MODEL_LEN:-4096}"
+      - "${VLLM_MAX_MODEL_LEN:-8192}"
       - "--gpu-memory-utilization"
-      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
-      - "--max-num-seqs"
-      - "${VLLM_MAX_NUM_SEQS:-64}"
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.50}"
       - "--dtype"
       - "${VLLM_DTYPE:-auto}"
+      - "--kv-cache-dtype"
+      - "${VLLM_KV_CACHE_DTYPE:-fp8_e5m2}"
       - "--swap-space"
-      - "${VLLM_SWAP_SPACE:-4}"
+      - "${VLLM_SWAP_SPACE:-8}"
+      # ── 동시성 & 배치 ──
+      - "--max-num-seqs"
+      - "${VLLM_MAX_NUM_SEQS:-16}"
+      - "--max-num-batched-tokens"
+      - "${VLLM_MAX_NUM_BATCHED_TOKENS:-2048}"
+      # ── 병렬 처리 ──
+      - "--tensor-parallel-size"
+      - "${VLLM_TENSOR_PARALLEL_SIZE:-1}"
+      # ── 성능 최적화 ──
+      - "--enable-prefix-caching"
+      - "--enable-chunked-prefill"
+      # ── 비전 모델 ──
       - "--trust-remote-code"
       - "--limit-mm-per-prompt"
-      - '{"image": 5}'
+      - "image=5"
+      # ── 네트워크 ──
       - "--host"
       - "0.0.0.0"
       - "--port"
@@ -56,20 +80,21 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${VLLM_CPU_LIMIT:-12}"
-          memory: ${VLLM_MEMORY_LIMIT:-24g}
+          cpus: "${VLLM_CPU_LIMIT:-6}"
+          memory: ${VLLM_MEMORY_LIMIT:-48g}
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: ${VLLM_GPU_COUNT:-1}
               capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 180s
+      retries: 5
+      # 32B FP8 모델은 로딩에 시간이 걸림 (첫 실행 시 다운로드 포함 ~10분)
+      start_period: 600s
     networks:
       - llm-network
 
@@ -90,16 +115,17 @@ services:
       - "shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}"
       - "-c"
       - "max_connections=100"
-    # PostgreSQL: BIND_ADDRESS로 바인딩 주소 제어 (기본: 127.0.0.1 — 외부 접근 차단)
+    # PostgreSQL: 항상 localhost에만 바인딩 (외부 접근 차단)
+    # DB는 Docker 내부 네트워크로만 접근하므로 외부 노출 불필요
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
     deploy:
       resources:
         limits:
-          cpus: "${POSTGRES_CPU_LIMIT:-2}"
+          cpus: "${POSTGRES_CPU_LIMIT:-1}"
           memory: ${POSTGRES_MEMORY_LIMIT:-2g}
     restart: unless-stopped
     healthcheck:
@@ -125,9 +151,9 @@ services:
       - UI_PASSWORD=${LITELLM_UI_PASSWORD:?LITELLM_UI_PASSWORD is required}
       - STORE_MODEL_IN_DB=True
       # litellm-config.yaml에서 os.environ/ 으로 참조
-      - LITELLM_MODEL_ID=openai/${VLLM_MODEL:-Qwen/Qwen2.5-3B-Instruct}
+      - LITELLM_MODEL_ID=openai/${VLLM_MODEL:-Qwen/Qwen3-VL-32B-Instruct-FP8}
       - VLLM_API_BASE=http://vllm:${VLLM_PORT:-8000}/v1
-      - VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-4096}
+      - VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-8192}
     command: >
       --config /app/config.yaml
       --port 4000
@@ -141,7 +167,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "${LITELLM_CPU_LIMIT:-4}"
+          cpus: "${LITELLM_CPU_LIMIT:-1}"
           memory: ${LITELLM_MEMORY_LIMIT:-2g}
     depends_on:
       postgres:
@@ -160,6 +186,8 @@ services:
   # ============================================================================
   #                           BACKEND SERVICE (FastAPI)
   # ============================================================================
+  # 비전 모델 최적화: 이미지 리사이즈/디코딩을 위해 CPU 3코어 배정
+  # ============================================================================
   backend:
     build:
       context: ./submodules/backend
@@ -172,12 +200,19 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-24}
       - DEBUG=${DEBUG:-false}
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
+      # ALLOWED_ORIGINS: .env에 ALLOWED_ORIGINS가 설정되면 그 값 사용
+      # 미설정 시 SERVER_IP + FRONTEND_PORT로 자동 생성
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://${SERVER_IP:-localhost}:${FRONTEND_PORT:-3000}}
       - MAX_REQUEST_BODY_SIZE=${MAX_REQUEST_BODY_SIZE:-50}
       - MAX_UPLOAD_FILE_SIZE=${MAX_UPLOAD_FILE_SIZE:-20}
       - MAX_IMAGE_DIMENSION=${MAX_IMAGE_DIMENSION:-1280}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8080}:8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "${BACKEND_CPU_LIMIT:-3}"
+          memory: ${BACKEND_MEMORY_LIMIT:-4g}
     depends_on:
       postgres:
         condition: service_healthy

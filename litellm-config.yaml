@@ -6,18 +6,20 @@
 # ==============================================================================
 
 # Model Configuration
+# LITELLM_MODEL_ID, VLLM_API_BASE, VLLM_MAX_MODEL_LEN은
+# docker-compose.yml에서 환경변수로 주입됩니다.
 model_list:
-  # Primary model - uses environment variable from docker-compose
   - model_name: "Local LLM"
     litellm_params:
-      model: "openai/Qwen/Qwen2.5-3B-Instruct"
-      api_base: "http://vllm:8000/v1"
+      model: "os.environ/LITELLM_MODEL_ID"
+      api_base: "os.environ/VLLM_API_BASE"
       api_key: "not-needed"
       rpm: 100
       tpm: 100000
     model_info:
-      description: "Local LLM running on vLLM"
+      description: "Local VLM running on vLLM (vision + text)"
       max_tokens: 4096
+      supports_vision: true
 
 # LiteLLM Settings
 litellm_settings:
@@ -26,7 +28,7 @@ litellm_settings:
   
   # Retry settings
   num_retries: 3
-  request_timeout: 120
+  request_timeout: 180
   
   # Logging
   set_verbose: false
@@ -39,7 +41,7 @@ litellm_settings:
 router_settings:
   routing_strategy: "least-busy"
   num_retries: 2
-  timeout: 120
+  timeout: 180
 
 # General Proxy Settings
 general_settings:
@@ -53,5 +55,5 @@ general_settings:
   # Store model info in DB
   store_model_in_db: true
   
-  # CORS for frontend — 내부 네트워크 전용 (절대 "*" 사용 금지)
-  allowed_origins: ["http://localhost:3000"]
+  # CORS: LiteLLM은 Docker 내부 네트워크에서만 접근되므로 별도 설정 불필요
+  # (CORS는 FastAPI 백엔드에서 ALLOWED_ORIGINS 환경변수로 제어)

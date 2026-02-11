@@ -20,6 +20,14 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 
 STUDENT_COUNT = 100
 
+# Rate Limit / Budget 설정 (환경변수로 오버라이드 가능)
+STUDENT_RPM = int(os.environ.get("DEFAULT_RATE_LIMIT_RPM", "10"))
+STUDENT_TPM = int(os.environ.get("DEFAULT_RATE_LIMIT_TPM", "100000"))
+STUDENT_MAX_BUDGET = float(os.environ.get("DEFAULT_STUDENT_MAX_BUDGET", "1.0"))
+ADMIN_RPM = int(os.environ.get("ADMIN_RATE_LIMIT_RPM", "1000"))
+ADMIN_TPM = int(os.environ.get("ADMIN_RATE_LIMIT_TPM", "1000000"))
+ADMIN_MAX_BUDGET = float(os.environ.get("ADMIN_MAX_BUDGET", "1000.0"))
+
 def wait_for_litellm():
     print(f"Waiting for LiteLLM at {LITELLM_URL}...")
     url = f"{LITELLM_URL}/health/readiness"
@@ -71,21 +79,20 @@ def delete_keys(keys):
     except Exception as e:
         print(f"Error deleting keys: {e}")
 
-def generate_key(user_id, role="student", max_budget=1.0, rpm=10):
+def generate_key(user_id, role="student", max_budget=None, rpm=None, tpm=None):
     url = f"{LITELLM_URL}/key/generate"
     headers = {
         "Authorization": f"Bearer {MASTER_KEY}",
         "Content-Type": "application/json"
     }
     
-    # Model name updated to "Local LLM" as per user request
     data = {
         "models": ["Local LLM"],
         "aliases": {"user_email": f"{user_id}@example.com"},
         "duration": None,
-        "max_budget": max_budget,
-        "tpm_limit": 100000,
-        "rpm_limit": rpm,
+        "max_budget": max_budget if max_budget is not None else STUDENT_MAX_BUDGET,
+        "tpm_limit": tpm if tpm is not None else STUDENT_TPM,
+        "rpm_limit": rpm if rpm is not None else STUDENT_RPM,
         "metadata": {
             "user_id": user_id,
             "role": role,
@@ -102,6 +109,23 @@ def generate_key(user_id, role="student", max_budget=1.0, rpm=10):
     except Exception as e:
         print(f"Error generating key for {user_id}: {e}")
         return None
+
+async def check_already_seeded() -> bool:
+    """student 유저가 이미 존재하면 True를 반환합니다.
+    init.sql이 admin만 생성한 경우에는 False → 시드 실행."""
+    try:
+        engine = create_async_engine(DATABASE_URL)
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT COUNT(*) FROM llm_app.users WHERE role = 'student';")
+            )
+            count = result.scalar()
+        await engine.dispose()
+        return count is not None and count > 0
+    except Exception:
+        # 테이블이 아직 없는 경우 (최초 배포) → seeding 필요
+        return False
+
 
 async def seed_database(parameterized_statements):
     """
@@ -125,6 +149,11 @@ async def seed_database(parameterized_statements):
         exit(1)
 
 def main():
+    # 이미 시딩된 DB인지 확인 (volume이 유지된 경우 스킵)
+    if asyncio.run(check_already_seeded()):
+        print("✅ Users already exist in DB — skipping seed. (To re-seed, remove the postgres volume and redeploy.)")
+        return
+
     if not wait_for_litellm():
         exit(1)
         
@@ -147,7 +176,7 @@ def main():
 
     # 2. Admin Key — 파라미터화 쿼리로 SQL Injection 방지
     print("Generating Admin key...", end=" ")
-    admin_key = generate_key("admin", role="admin", max_budget=1000.0, rpm=1000)
+    admin_key = generate_key("admin", role="admin", max_budget=ADMIN_MAX_BUDGET, rpm=ADMIN_RPM, tpm=ADMIN_TPM)
     if admin_key:
         print("Done.")
         statements.append((
@@ -170,7 +199,7 @@ def main():
     print(f"Generating {STUDENT_COUNT} Student keys...")
     for i in range(1, STUDENT_COUNT + 1):
         student_id = str(i)
-        api_key = generate_key(student_id, role="student", max_budget=1.0, rpm=10)
+        api_key = generate_key(student_id, role="student")
         if api_key:
             statements.append((
                 """INSERT INTO llm_app.users (api_key, username, password_hash, role, is_active, daily_token_limit, display_name, class_name)
@@ -188,8 +217,37 @@ def main():
 
     print(f"  초기 비밀번호: {INITIAL_PASSWORD} (모든 계정 동일)")
     print(f"  ⚠  첫 로그인 후 반드시 비밀번호를 변경하세요!")
-    
-    # 4. Insert into DB
+
+    # 4. 시스템 설정 및 운영 스케줄 복원 (TRUNCATE CASCADE로 삭제되므로 재삽입 필요)
+    statements.append((
+        """INSERT INTO llm_app.system_settings (key, value, description, updated_by)
+           VALUES
+               ('llm_enabled',        'true',   'LLM 추론 활성화 여부 (false = 비상 정지, GPU 미사용)',
+                   (SELECT id FROM llm_app.users WHERE username = 'admin')),
+               ('schedule_enabled',   'false',  '운영 시간 스케줄 활성화 (false = 24시간 운영, true = 스케줄 기반)',
+                   (SELECT id FROM llm_app.users WHERE username = 'admin')),
+               ('max_context_tokens', '4096',   'LLM 프롬프트에 포함할 최대 컨텍스트 토큰 수',
+                   (SELECT id FROM llm_app.users WHERE username = 'admin')),
+               ('default_daily_limit','100000', '신규 사용자 기본 일일 토큰 한도',
+                   (SELECT id FROM llm_app.users WHERE username = 'admin'))
+           ON CONFLICT (key) DO NOTHING;""",
+        None
+    ))
+    statements.append((
+        """INSERT INTO llm_app.operation_schedules (day_of_week, start_time, end_time, is_active)
+           VALUES
+               (0, '00:00', '23:59', true),
+               (1, '00:00', '23:59', true),
+               (2, '00:00', '23:59', true),
+               (3, '00:00', '23:59', true),
+               (4, '00:00', '23:59', true),
+               (5, '00:00', '23:59', true),
+               (6, '00:00', '23:59', true)
+           ON CONFLICT (day_of_week) DO NOTHING;""",
+        None
+    ))
+
+    # 5. Insert into DB
     if statements:
         asyncio.run(seed_database(statements))
     else:
