@@ -93,8 +93,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      # 32B FP8 모델은 로딩에 시간이 걸림 (첫 실행 시 다운로드 포함 ~10분)
-      start_period: 600s
+      # 32B FP8 모델은 로딩에 시간이 걸림 (첫 실행 시 다운로드 포함 ~20분+)
+      start_period: 1800s
     networks:
       - llm-network
 
