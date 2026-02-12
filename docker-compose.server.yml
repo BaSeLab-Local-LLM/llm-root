@@ -65,7 +65,7 @@ services:
       # ── 비전 모델 ──
       - "--trust-remote-code"
       - "--limit-mm-per-prompt"
-      - "image=5"
+      - '{"image": 5}'
       # ── 네트워크 ──
       - "--host"
       - "0.0.0.0"
