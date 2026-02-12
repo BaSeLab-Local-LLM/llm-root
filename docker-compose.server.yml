@@ -48,7 +48,7 @@ services:
       - "--dtype"
       - "${VLLM_DTYPE:-auto}"
       - "--kv-cache-dtype"
-      - "${VLLM_KV_CACHE_DTYPE:-fp8_e5m2}"
+      - "${VLLM_KV_CACHE_DTYPE:-auto}"
       - "--swap-space"
       - "${VLLM_SWAP_SPACE:-8}"
       # ── 동시성 & 배치 ──
