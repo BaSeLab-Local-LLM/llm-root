@@ -200,6 +200,7 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-24}
       - DEBUG=${DEBUG:-false}
+      - COOKIE_SECURE=${COOKIE_SECURE:-auto}
       # ALLOWED_ORIGINS: .env에 ALLOWED_ORIGINS가 설정되면 그 값 사용
       # 미설정 시 SERVER_IP + FRONTEND_PORT로 자동 생성
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://${SERVER_IP:-localhost}:${FRONTEND_PORT:-3000}}
