@@ -104,6 +104,37 @@ docker volume rm llm-postgres-data
 docker compose --env-file .env.local up -d
 ```
 
+## ngrok으로 외부 접속 (선택)
+
+기존 compose 파일을 그대로 사용하고, `docker-compose.ngrok.yml`만 오버라이드해서 터널을 추가합니다.
+
+`.env.local` 또는 `.env.server`에 아래 값을 설정합니다:
+
+```dotenv
+NGROK_AUTHTOKEN=<ngrok token>
+NGROK_TARGET=frontend:80
+NGROK_BASIC_AUTH=<user:strong-password>
+# NGROK_DOMAIN=<reserved-domain.ngrok-free.app>  # 선택
+```
+
+실행:
+
+```bash
+# 로컬 기본 구성 + ngrok
+docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.ngrok.yml up -d
+
+# 서버 구성 + ngrok
+docker compose --env-file .env.server -f docker-compose.server.yml -f docker-compose.ngrok.yml up -d
+```
+
+터널 URL 확인:
+
+```bash
+curl -s http://127.0.0.1:4040/api/tunnels
+```
+
+기본값(`NGROK_TARGET=frontend:80`)이면 단일 ngrok URL에서 UI와 `/api/*`를 모두 사용할 수 있습니다.
+
 ## 기본 계정
 
 | 계정 | 아이디 | 비밀번호 | 비고 |

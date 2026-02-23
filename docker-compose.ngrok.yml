@@ -1,0 +1,45 @@
+# ==============================================================================
+#                      OPTIONAL NGROK TUNNEL (OVERRIDE FILE)
+# ==============================================================================
+# Usage:
+#   docker compose --env-file .env.local -f docker-compose.yml -f docker-compose.ngrok.yml up -d
+#   docker compose --env-file .env.server -f docker-compose.server.yml -f docker-compose.ngrok.yml up -d
+#
+# Default target:
+#   frontend:80  (full web UI + /api proxy)
+# ==============================================================================
+
+services:
+  ngrok:
+    image: ngrok/ngrok:3
+    container_name: llm-ngrok
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_started
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:?NGROK_AUTHTOKEN is required}
+      - NGROK_TARGET=${NGROK_TARGET:-frontend:80}
+      - NGROK_DOMAIN=${NGROK_DOMAIN:-}
+      - NGROK_BASIC_AUTH=${NGROK_BASIC_AUTH:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -n "$$NGROK_DOMAIN" ]; then
+          DOMAIN_ARG="--domain=$$NGROK_DOMAIN"
+        else
+          DOMAIN_ARG=""
+        fi
+
+        if [ -n "$$NGROK_BASIC_AUTH" ]; then
+          AUTH_ARG="--basic-auth=$$NGROK_BASIC_AUTH"
+        else
+          AUTH_ARG=""
+          echo "[WARN] NGROK_BASIC_AUTH is empty. Tunnel is exposed without extra auth."
+        fi
+
+        exec ngrok http --log=stdout $$DOMAIN_ARG $$AUTH_ARG "$$NGROK_TARGET"
+    ports:
+      - "127.0.0.1:${NGROK_INSPECT_PORT:-4040}:4040"
+    networks:
+      - llm-network
