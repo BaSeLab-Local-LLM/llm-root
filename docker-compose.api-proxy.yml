@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  api-proxy:
+    image: caddy:2-alpine
+    container_name: llm-api-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - llm-network
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+networks:
+  llm-network:
+    external: true
+    name: llm-network

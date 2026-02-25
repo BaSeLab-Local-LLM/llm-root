@@ -6,7 +6,7 @@
 #   docker compose --env-file .env.server -f docker-compose.server.yml -f docker-compose.ngrok.yml up -d
 #
 # Default target:
-#   frontend:80  (full web UI + /api proxy)
+#   api-proxy:80  (backend API reverse proxy)
 # ==============================================================================
 
 services:
@@ -14,12 +14,9 @@ services:
     image: ngrok/ngrok:3
     container_name: llm-ngrok
     restart: unless-stopped
-    depends_on:
-      frontend:
-        condition: service_started
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:?NGROK_AUTHTOKEN is required}
-      - NGROK_TARGET=${NGROK_TARGET:-frontend:80}
+      - NGROK_TARGET=${NGROK_TARGET:-api-proxy:80}
       - NGROK_DOMAIN=${NGROK_DOMAIN:-}
       - NGROK_BASIC_AUTH=${NGROK_BASIC_AUTH:-}
     entrypoint: ["/bin/sh", "-c"]

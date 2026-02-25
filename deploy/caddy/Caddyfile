@@ -1,0 +1,17 @@
+163.239.27.193.nip.io {
+    log {
+        output stdout
+        format console
+    }
+    # Public HTTPS endpoint for Vercel external rewrite
+    reverse_proxy backend:8000
+}
+
+:80 {
+    log {
+        output stdout
+        format console
+    }
+    # Fallback HTTP endpoint (direct IP testing)
+    reverse_proxy backend:8000
+}

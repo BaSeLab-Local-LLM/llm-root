@@ -1,0 +1,16 @@
+[Unit]
+Description=Sync ngrok URL to frontend vercel.json
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/miruware/llm-root
+EnvironmentFile=-/home/miruware/llm-root/deploy/ngrok-sync.env
+ExecStart=/home/miruware/llm-root/scripts/sync_ngrok_vercel.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

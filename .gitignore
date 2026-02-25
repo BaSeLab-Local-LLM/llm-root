@@ -5,6 +5,7 @@ seed_students.sql
 .env
 .env.*
 !.env.example
+deploy/ngrok-sync.env
 secrets.json
 *.pem
 *.key
