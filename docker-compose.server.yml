@@ -11,7 +11,7 @@ version: "3.8"
 #   - postgres: Database for LiteLLM (API keys, usage tracking)
 #   - litellm: API Gateway (OpenAI-compatible, key management)
 #   - backend: FastAPI (auth, chat, file upload)
-#   - frontend: React web UI (Nginx)
+#   - seed: one-time key/bootstrap job (profile: init)
 #
 # 사용법:
 #   docker compose -f docker-compose.server.yml --env-file .env.server up -d
@@ -226,6 +226,7 @@ services:
   #                           SEED SERVICE (Run Once)
   # ============================================================================
   seed:
+    profiles: ["init"]
     build:
       context: ./submodules/backend
     container_name: llm-seed
@@ -252,27 +253,6 @@ services:
     networks:
       - llm-network
     restart: "no"
-
-  # ============================================================================
-  #                           FRONTEND SERVICE
-  # ============================================================================
-  frontend:
-    build:
-      context: ./submodules/frontend
-      dockerfile: Dockerfile
-    container_name: llm-frontend
-    ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-3000}:80"
-    deploy:
-      resources:
-        limits:
-          cpus: "${FRONTEND_CPU_LIMIT:-1}"
-          memory: ${FRONTEND_MEMORY_LIMIT:-512m}
-    depends_on:
-      - backend
-    restart: unless-stopped
-    networks:
-      - llm-network
 
 # ==============================================================================
 #                               VOLUMES

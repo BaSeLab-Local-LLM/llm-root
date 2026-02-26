@@ -3,8 +3,23 @@
         output stdout
         format console
     }
-    # Public HTTPS endpoint for Vercel external rewrite
-    reverse_proxy backend:8000
+    route {
+        # Public HTTPS endpoint for Vercel external rewrite
+        reverse_proxy backend:8000 {
+            # Do not forward identifying upstream response headers when present
+            header_down -Server
+            header_down -Via
+            header_down -X-Powered-By
+            header_down -Ngrk-Agent-Ips
+        }
+        header {
+            # Best-effort masking of proxy/product fingerprints
+            -Server
+            -Via
+            -X-Powered-By
+            -Ngrk-Agent-Ips
+        }
+    }
 }
 
 :80 {
@@ -12,6 +27,21 @@
         output stdout
         format console
     }
-    # Fallback HTTP endpoint (direct IP testing)
-    reverse_proxy backend:8000
+    route {
+        # Fallback HTTP endpoint (direct IP testing)
+        reverse_proxy backend:8000 {
+            # Do not forward identifying upstream response headers when present
+            header_down -Server
+            header_down -Via
+            header_down -X-Powered-By
+            header_down -Ngrk-Agent-Ips
+        }
+        header {
+            # Best-effort masking of proxy/product fingerprints
+            -Server
+            -Via
+            -X-Powered-By
+            -Ngrk-Agent-Ips
+        }
+    }
 }
